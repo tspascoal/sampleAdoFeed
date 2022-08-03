@@ -58,7 +58,7 @@ jobs:
         run: |
           npm init --force
           npm install duplexer --verbose
-          npm install octokit
+          npm install octokit --verbose
         env:
           MY_TOKEN: ${{ env.encoded_token }}
           
