@@ -1,0 +1,71 @@
+name: testfeed
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      feedname: upstream
+
+    # NOTE: Don't really need to use a secret for ORGNAME, just used to avoid leaking the org I'm using for tests :)
+
+    steps:
+      # NOTE: BY DEFAULT THIS ACTION write the .npmrc file to `/home/runner/.npmrc` (it can be changed as a parameter) which is not very nice from concurrency perspective
+      # multiple jobs may _infect_ the file
+      # The file is also appended so for self non ephemeral runners the file will grow and grow.... 
+      # To avoid that we CLEAN IT UP (not that we have it on source control since home/runner is not the workspace so no SC) on the beginning. It may not be what you want      
+      - run: |
+          echo 'registry=https://pkgs.dev.azure.com/${{ secrets.ORGNAME }}/_packaging/upStream/npm/registry/' > /home/runner/.npmrc
+          echo 'always-auth=true' >> /home/runner/.npmrc
+
+      # Depending if the feed is org or project scoped you have hafe to "cheat" a little and use ORG/PROJECT as the org value since this
+      # action doesn't support project scoped feeds (no specific parameter)
+      # see details at https://docs.microsoft.com/en-us/azure/devops/artifacts/npm/npmrc?view=azure-devops&tabs=linux%2Cclassic#credentials-setup
+      - uses: trejjam/npm-scope-action@v1.1.0
+        with:
+          # We could use the token here, but let's use a variable so we don't leak credentials to the file (and later pass the variable value)
+          # so we say the token is a variable that will be defined later
+          accessToken: '${MY_TOKEN}'
+          organization: '${{ secrets.ORGNAME }}'
+          feed: 'upStream'
+          
+      - run: |
+          cat /home/runner/.npmrc
+          
+      - name: Upload a Build Artifact
+        uses: actions/upload-artifact@v3.1.0
+        with:
+          name: npmrc
+          path: /home/runner/.npmrc
+          
+      # token is stored in secrets NOT in base64 so we encode it. This could be avoid IF it was stored in base64 from the beginning
+      - name: encode token base64
+        run: |
+          encoded_token=$(echo -n ${{ secrets.ADO_PAT }} | base64)
+          #echo "::add-mask::$encoded_token"
+          echo "encoded_token=$encoded_token" >> $GITHUB_ENV
+          
+      # Just install any npm package since this feed supports upstreaming
+      - name: install npm package
+        run: |
+          npm init --force
+          npm install duplexer --verbose
+          npm install octokit
+        env:
+          MY_TOKEN: ${{ env.encoded_token }}
+          
+      - name: double check
+        run: |
+          ls -al 
+          # count installed dependencies
+          cat package-lock.json | jq '.dependencies | length'        
+
+      # CLEANUP of .NPMRC if necessary is left as an exercise to the reader :) (but there is nothing in there that is critical)
